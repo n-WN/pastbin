@@ -16,10 +16,10 @@ D1 and R2 has more and more and more request limit than KV.
 
 ### Features
 
-- [x] Code highlight (https://pb.ocfox.me/t1no.hs)
-- [x] Image/Video/Audio in browser (https://pb.ocfox.me/heisenberg.png)
-- [x] Custom URL (`echo "why" | curl -F "c=@-" pb.ocfox.me/how`)
-- [x] Random base36 key (e.g. https://pb.ocfox.me/t1no)
+- [x] Code highlight (https://pb.cauchy.top/t1no.hs)
+- [x] Image/Video/Audio in browser (https://pb.cauchy.top/heisenberg.png)
+- [x] Custom URL (`echo "why" | curl -F "c=@-" pb.cauchy.top/how`)
+- [x] Random base36 key (e.g. https://pb.cauchy.top/t1no)
 - [x] Delete paste based IP (same ip dont need other password)
 - [x] Only one dependency (hono) 
 - [ ] File upload front-end
@@ -28,23 +28,23 @@ D1 and R2 has more and more and more request limit than KV.
 
 - Create a new paste from pipe
 ```bash
-echo "Ciallo～(∠・ω< )" | curl -F "c=@-" pb.ocfox.me
+echo "Ciallo～(∠・ω< )" | curl -F "c=@-" pb.cauchy.top
 ```
 
 - Create a new paste from file
 ```bash
-curl -F "c=@example.zip" pb.ocfox.me
+curl -F "c=@example.zip" pb.cauchy.top
 ```
 
 - Delete a paste
 ```bash
-curl pb.ocfox.me/xxxx/del
+curl pb.cauchy.top/xxxx/del
 ```
 
 ### Deploy
 
 ```bash
-git clone https://github.com/ocfox/pastbin
+git clone https://github.com/n-wn/pastbin
 ```
 Edit `wrangler.toml` to your own settings.
 
