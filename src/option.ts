@@ -99,7 +99,7 @@ export async function get(
   }
 
   if (extend && imageFormats.includes(extend)) {
-    return ctx.newResponse(content, {
+    return ctx.newResponse(content.buffer, {
       headers: { "Content-Type": "image/" + extend },
     });
   }
