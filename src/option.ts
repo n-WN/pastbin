@@ -1,6 +1,6 @@
 import { Context } from "hono";
 import { Bindings } from "./bindings";
-import { generateKey, IsFormData, isBinaryContent, encodeBase64, decodeBase64 } from "./utils";
+import { generateKey, IsFormData } from "./utils";
 import { parseFormdata } from "./parse";
 import { Highlight } from "./page";
 
@@ -10,7 +10,7 @@ type Metadata = {
 
 type D1Data = {
   key: string;
-  content: Uint8Array | string;
+  content: ArrayBuffer | string;
   metadata: Metadata | string;
 };
 
@@ -49,22 +49,11 @@ export async function post(
 
     await ctx.env.R2.put(key, content);
   } else {
-    // Store smaller files in D1
-    let storedContent: string;
-    const isBinary = isBinaryContent(content);
-    
-    if (isBinary) {
-      // For binary content, encode as base64 with a prefix
-      storedContent = "$BINARY_BASE64:" + encodeBase64(content);
-    } else {
-      // For text content, store as-is (decoded as UTF-8)
-      storedContent = new TextDecoder().decode(content);
-    }
-    
+    // Store smaller files directly in D1 as BLOB
     await ctx.env.DB.prepare(
       "INSERT OR REPLACE INTO pastbin (key, content, metadata) VALUES (?, ?, ?)"
     )
-      .bind(key, storedContent, JSON.stringify({ ip }))
+      .bind(key, content, JSON.stringify({ ip }))
       .run();
   }
 
@@ -103,16 +92,10 @@ export async function get(
   let content: Uint8Array;
   
   if (typeof data.content === "string") {
-    // Check if this is base64-encoded binary content
-    if (data.content.startsWith("$BINARY_BASE64:")) {
-      const base64Data = data.content.substring("$BINARY_BASE64:".length);
-      content = decodeBase64(base64Data);
-    } else {
-      // Regular text content
-      content = new TextEncoder().encode(data.content);
-    }
+    // Legacy: text content stored as string (should not happen with BLOB schema)
+    content = new TextEncoder().encode(data.content);
   } else {
-    // Legacy: data stored as Uint8Array (should not happen with new code)
+    // Binary content stored as ArrayBuffer in BLOB field
     content = new Uint8Array(data.content);
   }
 
@@ -128,14 +111,13 @@ export async function get(
     });
   }
 
-  // Check if content is binary or text for default response
-  if (data.content && typeof data.content === "string" && data.content.startsWith("$BINARY_BASE64:")) {
-    // Binary content - return as binary
-    return ctx.newResponse(content.slice().buffer);
-  } else {
-    // Text content - return as text
-    const text = new TextDecoder().decode(content);
+  // Try to decode as text, fallback to binary if it fails
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(content);
     return ctx.newResponse(text);
+  } catch {
+    // Content is binary, return as-is
+    return ctx.newResponse(content.slice().buffer);
   }
 }
 
