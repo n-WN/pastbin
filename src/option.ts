@@ -4,13 +4,34 @@ import { generateKey, IsFormData } from "./utils";
 import { parseFormdata } from "./parse";
 import { Highlight } from "./page";
 
+/**
+ * Detects if content is likely text without using try-catch
+ */
+function isLikelyText(content: Uint8Array): boolean {
+  // Check for null bytes (strong indicator of binary content)
+  for (let i = 0; i < Math.min(content.length, 8192); i++) {
+    if (content[i] === 0) {
+      return false;
+    }
+  }
+  
+  // Check if content is valid UTF-8
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(content.slice(0, Math.min(content.length, 8192)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 type Metadata = {
   ip: string;
+  contentType?: 'text' | 'binary';
 };
 
 type D1Data = {
   key: string;
-  content: Uint8Array | string;
+  content: ArrayBuffer | string;
   metadata: Metadata | string;
 };
 
@@ -40,6 +61,7 @@ export async function post(
   }
 
   if (content.length > 1024 * 1024 * 0.99) {
+    // Store large files in R2
     await ctx.env.DB.prepare(
       "INSERT OR REPLACE INTO pastbin (key, content, metadata) VALUES (?, ?, ?)"
     )
@@ -48,10 +70,14 @@ export async function post(
 
     await ctx.env.R2.put(key, content);
   } else {
+    // Detect content type for smaller files
+    const contentType = isLikelyText(content) ? 'text' : 'binary';
+    
+    // Store smaller files directly in D1 as BLOB
     await ctx.env.DB.prepare(
       "INSERT OR REPLACE INTO pastbin (key, content, metadata) VALUES (?, ?, ?)"
     )
-      .bind(key, content, JSON.stringify({ ip }))
+      .bind(key, content, JSON.stringify({ ip, contentType }))
       .run();
   }
 
@@ -87,11 +113,16 @@ export async function get(
     return ctx.newResponse(await content.arrayBuffer());
   }
 
+  let content: Uint8Array;
+  
   if (typeof data.content === "string") {
-    return ctx.newResponse(data.content);
+    // Legacy: text content stored as string (should not happen with BLOB schema)
+    content = new TextEncoder().encode(data.content);
+  } else {
+    // Binary content stored as ArrayBuffer in BLOB field
+    content = new Uint8Array(data.content);
   }
 
-  const content = new Uint8Array(data.content);
   const imageFormats = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"];
 
   if (extend && !imageFormats.includes(extend)) {
@@ -99,13 +130,27 @@ export async function get(
   }
 
   if (extend && imageFormats.includes(extend)) {
-    return ctx.newResponse(content.buffer, {
+    return ctx.newResponse(content.slice().buffer, {
       headers: { "Content-Type": "image/" + extend },
     });
   }
 
-  const text = new TextDecoder().decode(content);
-  return ctx.newResponse(text);
+  // Use stored content type to determine how to handle content
+  const metadata = JSON.parse(data.metadata?.toString() || "{}") as Metadata;
+  
+  if (metadata.contentType === 'binary') {
+    // Content is binary, return as-is
+    return ctx.newResponse(content.slice().buffer);
+  } else {
+    // Content is text or unknown (legacy), try to decode as text
+    try {
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(content);
+      return ctx.newResponse(text);
+    } catch {
+      // Fallback to binary if decoding fails (for legacy data)
+      return ctx.newResponse(content.slice().buffer);
+    }
+  }
 }
 
 export async function del(

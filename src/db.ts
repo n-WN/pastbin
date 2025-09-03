@@ -1,6 +1,6 @@
 export async function createTable(db: D1Database) {
   db.prepare(
-    "CREATE TABLE IF NOT EXISTS pastbin (key TEXT PRIMARY KEY, content TEXT, metadata TEXT)"
+    "CREATE TABLE IF NOT EXISTS pastbin (key TEXT PRIMARY KEY, content BLOB, metadata TEXT)"
   ).run();
 }
 
