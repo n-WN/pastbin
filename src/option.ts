@@ -1,6 +1,6 @@
 import { Context } from "hono";
 import { Bindings } from "./bindings";
-import { generateKey, IsFormData } from "./utils";
+import { generateKey, IsFormData, isBinaryContent, encodeBase64, decodeBase64 } from "./utils";
 import { parseFormdata } from "./parse";
 import { Highlight } from "./page";
 
@@ -40,6 +40,7 @@ export async function post(
   }
 
   if (content.length > 1024 * 1024 * 0.99) {
+    // Store large files in R2
     await ctx.env.DB.prepare(
       "INSERT OR REPLACE INTO pastbin (key, content, metadata) VALUES (?, ?, ?)"
     )
@@ -48,10 +49,22 @@ export async function post(
 
     await ctx.env.R2.put(key, content);
   } else {
+    // Store smaller files in D1
+    let storedContent: string;
+    const isBinary = isBinaryContent(content);
+    
+    if (isBinary) {
+      // For binary content, encode as base64 with a prefix
+      storedContent = "$BINARY_BASE64:" + encodeBase64(content);
+    } else {
+      // For text content, store as-is (decoded as UTF-8)
+      storedContent = new TextDecoder().decode(content);
+    }
+    
     await ctx.env.DB.prepare(
       "INSERT OR REPLACE INTO pastbin (key, content, metadata) VALUES (?, ?, ?)"
     )
-      .bind(key, content, JSON.stringify({ ip }))
+      .bind(key, storedContent, JSON.stringify({ ip }))
       .run();
   }
 
@@ -87,11 +100,22 @@ export async function get(
     return ctx.newResponse(await content.arrayBuffer());
   }
 
+  let content: Uint8Array;
+  
   if (typeof data.content === "string") {
-    return ctx.newResponse(data.content);
+    // Check if this is base64-encoded binary content
+    if (data.content.startsWith("$BINARY_BASE64:")) {
+      const base64Data = data.content.substring("$BINARY_BASE64:".length);
+      content = decodeBase64(base64Data);
+    } else {
+      // Regular text content
+      content = new TextEncoder().encode(data.content);
+    }
+  } else {
+    // Legacy: data stored as Uint8Array (should not happen with new code)
+    content = new Uint8Array(data.content);
   }
 
-  const content = new Uint8Array(data.content);
   const imageFormats = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"];
 
   if (extend && !imageFormats.includes(extend)) {
@@ -99,13 +123,20 @@ export async function get(
   }
 
   if (extend && imageFormats.includes(extend)) {
-    return ctx.newResponse(content.buffer, {
+    return ctx.newResponse(content.slice().buffer, {
       headers: { "Content-Type": "image/" + extend },
     });
   }
 
-  const text = new TextDecoder().decode(content);
-  return ctx.newResponse(text);
+  // Check if content is binary or text for default response
+  if (data.content && typeof data.content === "string" && data.content.startsWith("$BINARY_BASE64:")) {
+    // Binary content - return as binary
+    return ctx.newResponse(content.slice().buffer);
+  } else {
+    // Text content - return as text
+    const text = new TextDecoder().decode(content);
+    return ctx.newResponse(text);
+  }
 }
 
 export async function del(
