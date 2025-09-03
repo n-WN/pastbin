@@ -4,8 +4,29 @@ import { generateKey, IsFormData } from "./utils";
 import { parseFormdata } from "./parse";
 import { Highlight } from "./page";
 
+/**
+ * Detects if content is likely text without using try-catch
+ */
+function isLikelyText(content: Uint8Array): boolean {
+  // Check for null bytes (strong indicator of binary content)
+  for (let i = 0; i < Math.min(content.length, 8192); i++) {
+    if (content[i] === 0) {
+      return false;
+    }
+  }
+  
+  // Check if content is valid UTF-8
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(content.slice(0, Math.min(content.length, 8192)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 type Metadata = {
   ip: string;
+  contentType?: 'text' | 'binary';
 };
 
 type D1Data = {
@@ -49,11 +70,14 @@ export async function post(
 
     await ctx.env.R2.put(key, content);
   } else {
+    // Detect content type for smaller files
+    const contentType = isLikelyText(content) ? 'text' : 'binary';
+    
     // Store smaller files directly in D1 as BLOB
     await ctx.env.DB.prepare(
       "INSERT OR REPLACE INTO pastbin (key, content, metadata) VALUES (?, ?, ?)"
     )
-      .bind(key, content, JSON.stringify({ ip }))
+      .bind(key, content, JSON.stringify({ ip, contentType }))
       .run();
   }
 
@@ -111,13 +135,21 @@ export async function get(
     });
   }
 
-  // Try to decode as text, fallback to binary if it fails
-  try {
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(content);
-    return ctx.newResponse(text);
-  } catch {
+  // Use stored content type to determine how to handle content
+  const metadata = JSON.parse(data.metadata?.toString() || "{}") as Metadata;
+  
+  if (metadata.contentType === 'binary') {
     // Content is binary, return as-is
     return ctx.newResponse(content.slice().buffer);
+  } else {
+    // Content is text or unknown (legacy), try to decode as text
+    try {
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(content);
+      return ctx.newResponse(text);
+    } catch {
+      // Fallback to binary if decoding fails (for legacy data)
+      return ctx.newResponse(content.slice().buffer);
+    }
   }
 }
 
